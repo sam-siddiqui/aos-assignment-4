@@ -66,7 +66,7 @@ void cleanUpFileTable() {
 // Refreshes the fileSystem's block0
 // Based on the contents in the disk[][] is diskSimulator.c
 int refreshGlobalBlock0() {
-    if (blockRead(block0, 0) != 0) {
+    if (blockRead(block0, 0) != SUCCESS) {
         free(block0);
         return -4; // Error reading disk block
     }
@@ -651,9 +651,6 @@ int cpmRename(char* oldName, char* newName) {
 
     // Locate extent and verify oldName
     uint8_t *ptr = block0 + (extentNum * EXTENT_SIZE) + 1; // Name starts at +1
-    // Check to see if we got the correct Extent with the oldName TODO
-    // if (strncmp((char*)ptr, oldName, splitAt) != 0) 
-    //     return -1;
     
     memset(ptr, ' ', NAME_SIZE + EXT_SIZE - 2); // Fill with spaces first
     
@@ -667,7 +664,7 @@ int cpmRename(char* oldName, char* newName) {
     strncpy((char*)ptr, newName, findCharIndex(newName, '\0', EXT_SIZE));
 
     // Write updated block back to disk
-    if (updateGlobalBlock0()) return -4;
+    if (updateGlobalBlock0() != SUCCESS) return -4;
 
     return 0;
 }
@@ -708,7 +705,7 @@ int cpmDelete(char* name) {
     //Clear out the entire extent
     for(int i = 1; i < EXTENT_SIZE; i++) *extentPtr++ = (uint8_t) 0 ;
 
-    if (updateGlobalBlock0() != 0) return -4;
+    if (updateGlobalBlock0() != SUCCESS) return -4;
 
     return 0;
 }
@@ -743,9 +740,9 @@ int cpmCopy(char* oldName, char* newName) {
         if (i < numFileBlocksNeeded) {
             if (newDirStruct->blocks[i] != 0) {
                 updateFileBlockStatus(newFreeBlocks[i], false);
-                blockRead(tempTransferBlock, newDirStruct->blocks[i]);
+                if(blockRead(tempTransferBlock, newDirStruct->blocks[i]) != SUCCESS) return -5;
                 newDirStruct->blocks[i] = newFreeBlocks[i];
-                blockWrite(tempTransferBlock, newDirStruct->blocks[i]);
+                if(blockWrite(tempTransferBlock, newDirStruct->blocks[i]) != SUCCESS) return -5;
                 continue;
             }
         }
@@ -766,7 +763,7 @@ int cpmCopy(char* oldName, char* newName) {
     strncpy(newDirStruct->name, newName, dotIndex);
     writeDirStruct(newDirStruct, firstFreeExtentIndex, block0);
     // Write updated block back to disk
-    if (updateGlobalBlock0() != 0) return -4;
+    if (updateGlobalBlock0() != SUCCESS) return -4;
     free(newDirStruct);
     free(newFreeBlocks);
     free(tempTransferBlock);
@@ -807,10 +804,10 @@ int cpmOpen(char* fileName, char mode) {
             int firstNonZeroBlock = firstNonZeroFileBlock(fileExtentIndex);
             entry->blockBuffer = calloc(1, BLOCK_SIZE);
     
-            if(mode == 'r' && blockRead(entry->blockBuffer, firstNonZeroBlock) != 0) 
+            if(mode == 'r' && blockRead(entry->blockBuffer, firstNonZeroBlock) != SUCCESS) 
                 return -6;
             else {
-                if(blockWrite(entry->blockBuffer, firstNonZeroBlock) != 0) 
+                if(blockWrite(entry->blockBuffer, firstNonZeroBlock) != SUCCESS) 
                     return -6;
             }
             entry->currBlockIndex = firstNonZeroBlock;
@@ -890,7 +887,7 @@ int cpmRead(int pointer, uint8_t* buffer, int size) {
     uint8_t *fileBlockBuffer = malloc(BLOCK_SIZE);
     int *nonZeroBlocksArr = extractNonZeroBlocksD(fcb->dirStruct, nonZeroFileBlocksCount);
     int currReadWriteBlockNum = (int) fcb->readWriteIndex / BLOCK_SIZE;
-    if(blockRead(fileBlockBuffer, nonZeroBlocksArr[currReadWriteBlockNum]) != 0) return -1;
+    if(blockRead(fileBlockBuffer, nonZeroBlocksArr[currReadWriteBlockNum]) != SUCCESS) return -1;
 
     int readIndex = 0;
     int currReadWriteIndex = (int) fcb->readWriteIndex % BLOCK_SIZE;
@@ -898,7 +895,7 @@ int cpmRead(int pointer, uint8_t* buffer, int size) {
         if(currReadWriteIndex == BLOCK_SIZE) {
             // Reading crossed file blocks, reset the counter from beginning of new block
             currReadWriteBlockNum++;
-            if(blockRead(fileBlockBuffer, nonZeroBlocksArr[currReadWriteBlockNum]) != 0) return -1;     // Reset the toRead buffer
+            if(blockRead(fileBlockBuffer, nonZeroBlocksArr[currReadWriteBlockNum]) != SUCCESS) return -1;     // Reset the toRead buffer
             currReadWriteIndex = 0;                                                                     // Reset the count
             continue;                                                                                   // Restart again
         } 
@@ -911,7 +908,7 @@ int cpmRead(int pointer, uint8_t* buffer, int size) {
 
     free(fileBlockBuffer);
     free(nonZeroBlocksArr);
-    return 0;
+    return readIndex;
 }
 
 int cpmWrite(int pointer, uint8_t* buffer, int size) { 
@@ -947,10 +944,10 @@ int cpmWrite(int pointer, uint8_t* buffer, int size) {
         currFileBlockNum = freeBlocksArr[0];
         free(freeBlocksArr);
         fcb->dirStruct->blocks[0] = currFileBlockNum;
-        if(blockWrite(tempWriteBuffer, currFileBlockNum) != 0) return -1;
+        if(blockWrite(tempWriteBuffer, currFileBlockNum) != SUCCESS) return -1;
     } else {
         currFileBlockNum = fcb->dirStruct->blocks[firstEmptyBlockIndex];
-        if(blockWrite(tempWriteBuffer, currFileBlockNum) != 0) return -1;
+        if(blockWrite(tempWriteBuffer, currFileBlockNum) != SUCCESS) return -1;
     }
 
     int blockWriteBufferIndex = 0;
@@ -960,7 +957,7 @@ int cpmWrite(int pointer, uint8_t* buffer, int size) {
 
     while(writeIndex < size && currReadWriteIndex < BLOCK_SIZE) {
         if(currReadWriteIndex == BLOCK_SIZE) {
-            if(blockWrite(tempWriteBuffer, currFileBlockNum) != 0) return -1;
+            if(blockWrite(tempWriteBuffer, currFileBlockNum) != SUCCESS) return -1;
 
             currReadWriteIndex = 0;                                                             // Reset the curr Write Index
 
@@ -970,7 +967,7 @@ int cpmWrite(int pointer, uint8_t* buffer, int size) {
             fcb->currBlockIndex = nextClosestFreeFileBlockNum;                                  // Save it to the FCB as well
             updateFileBlockStatus(nextClosestFreeFileBlockNum, false);                          // Update the freelist too!
             
-            if(blockRead(tempWriteBuffer, currFileBlockNum) != 0) return -1;
+            if(blockRead(tempWriteBuffer, currFileBlockNum) != SUCCESS) return -1;
         }
         
         
@@ -983,13 +980,13 @@ int cpmWrite(int pointer, uint8_t* buffer, int size) {
     fcb->dirStruct->RC += (int) size / REGION_SIZE;                            // Update the Region Count
     fcb->dirStruct->BC += (int) size % REGION_SIZE;                            // Update the Byte Count in the Last region
     updateFileBlockStatus(currFileBlockNum, false);
-    if(blockRead(tempWriteBuffer, currFileBlockNum) != 0) return -1;
+    if(blockRead(tempWriteBuffer, currFileBlockNum) != SUCCESS) return -1;
 
     // Update the Global Block 0
     refreshFileSystem();
     writeDirStruct(fcb->dirStruct, fcb->dirExtentIndex, block0);
     // Write updated block back to disk
-    if (updateGlobalBlock0() != 0) return -4;
+    if (updateGlobalBlock0() != SUCCESS) return -4;
     free(tempWriteBuffer);
-    return 0;
+    return writeIndex;
 }
