@@ -773,7 +773,7 @@ int cpmCopy(char* oldName, char* newName) {
 int cpmOpen(char* fileName, char mode) {
     if(!checkLegalName(fileName)) return -2;
 
-    if(mode != 'r' && mode != w) return -6;
+    if(mode != 'r' && mode != 'w') return -6;
 
     refreshFileSystem();
 
@@ -849,7 +849,7 @@ int cpmOpen(char* fileName, char mode) {
 
             entry->dirExtentIndex = toAssignExtent;
             entry->readWriteIndex = 0;
-            entry->mode = mode;
+            entry->mode = mode == 'w'? w : r;
             entry->dirStruct = newDirStruct;
             writeDirStruct(newDirStruct, toAssignExtent, block0);
             entry->currBlockIndex = firstNonZeroFileBlock(toAssignExtent);
