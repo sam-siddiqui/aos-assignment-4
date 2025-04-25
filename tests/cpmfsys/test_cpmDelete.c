@@ -30,15 +30,14 @@ uint8_t diskBlock0[BLOCK_SIZE] = {
 void test_cpmDelete_valid_deletion() {
 
     // Attempt to delete the file
-    uint8_t block[BLOCK_SIZE];
-    blockRead(block, 0);
-    int extentNum = findExtentWithName("shortf.ps", block);
+    blockRead(block0, 0);
+    int extentNum = findExtentWithName("shortf.ps", block0);
     int result = cpmDelete("shortf.ps");
     CU_ASSERT(result == 0);
     
     // Verify extent 0 is marked as unused
-    blockRead(block, 0);
-    CU_ASSERT(block[extentNum * EXTENT_SIZE] == 0xe5);
+    blockRead(block0, 0);
+    CU_ASSERT(block0[extentNum * EXTENT_SIZE] == 0xe5);
 
     // Verify blocks 1, 2, 3, and 4 are marked as free
     // CU_ASSERT(testFreeList[1] == true);
@@ -50,12 +49,14 @@ void test_cpmDelete_invalid_filename() {
     CU_ASSERT(result == -2);
 }
 
-int setup() {    
-    if(blockWrite(diskBlock0, 0) == 0) return 0;
+int setup() {  
+    blockWrite(diskBlock0, 0);
+    if(refreshFileSystem() == 0) return 0;
     else return 1;
 }
 
 int cleanup() {
+    cleanUpFileSystem(false);
     return 0;
 }
 

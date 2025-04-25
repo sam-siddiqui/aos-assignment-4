@@ -55,12 +55,14 @@ void test_cpmRename_invalid_filename() {
     CU_ASSERT(result == -2);
 }
 
-int setup() {
-    if(blockWrite(diskBlock0, 0) == 0) return 0;
+int setup() {  
+    blockWrite(diskBlock0, 0);
+    if(refreshFileSystem() == 0) return 0;
     else return 1;
 }
 
 int cleanup() {
+    cleanUpFileSystem(false);
     return 0;
 }
 
