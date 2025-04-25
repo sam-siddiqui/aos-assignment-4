@@ -20,6 +20,12 @@ typedef struct dirStruct {
     uint8_t blocks[BLOCKS_PER_EXTENT];  // array of disk sectors used
 } DirStructType;
 
+typedef struct FCB FCB;
+typedef FCB FileControlBlock; 
+extern uint8_t *block0;
+extern bool freeList[NUM_BLOCKS];
+extern FileControlBlock** openFileTable;
+
 /* XL and XH store the extent number, bits 5-7 of XL are zero, bits 0-4 are
 low-order bits of extent number, bits 6-7 of XH are zero, bits 0-5 hold high
 -order bits of extent number
@@ -83,7 +89,12 @@ int cpmRename(char *oldName, char *newName);
 int cpmDelete(char *name);
 
 // following functions need not be implemented for Project 4
+
+// Copies the file extent and the contents of each associated file block
 int cpmCopy(char *oldName, char *newName);
+
+// Opens a file if it exists: move contents from disk to openFileTable->blockBuffer
+// Else creates a new file (extent in block0 and empty blockBuffer)
 int cpmOpen(char *fileName, char mode);
 // non-zero return indicates filePointer did not point to open file
 int cpmClose(int filePointer);
@@ -91,3 +102,12 @@ int cpmClose(int filePointer);
 int cpmRead(int pointer, uint8_t *buffer, int size);
 // returns number of bytes written, 0 = error
 int cpmWrite(int pointer, uint8_t *buffer, int size);
+
+// Initialises the openFileTable and global block0
+// Refreshes the GlobalBlock0 based on contents in disk[0] in diskSimulator.c
+int refreshFileSystem();
+
+// Can save the contents of the global buffer block0 
+// to a given image file name
+// Either way, cleans up the block0 buffer and openFileTable
+void cleanUpFileSystem(bool saveState);

@@ -23,6 +23,8 @@ FileControlBlock** openFileTable = NULL;
 int fileTableSize = 0;
 int fileTableCapacity = 0;
 
+// Used for expanding the openFileTable to a larger capacity
+// Cannot shrink the table
 void resizeOpenFileTable(int newCapacity) {
     if (!openFileTable) {
         openFileTable = calloc(newCapacity, sizeof(FileControlBlock*));
@@ -36,16 +38,34 @@ void resizeOpenFileTable(int newCapacity) {
     fileTableCapacity = newCapacity;
 }
 
+// Initializes (allocates space) the openFileTable to the default values
+// initialCapacity = 10
 void initOpenFileTable() {
     int initialCapacity = 10;
     fileTableSize = 0;
     resizeOpenFileTable(initialCapacity);
 }
 
-int fetchGlobalBlock0() {
-    if(openFileTable == NULL) initOpenFileTable();
-    if(block0 == NULL) block0 = malloc(BLOCK_SIZE);
+// Loops through the openFileTable, clears each entry (and it's contents)
+// Finally clears the space allocated from openFileTable's pointers
+void cleanUpFileTable() {
+    if (!openFileTable) return;
+    
+    for (int index = 0; index < fileTableCapacity; index++) {
+        if(openFileTable[index] == NULL) continue;
+        if(openFileTable[index]->blockBuffer != NULL) free(openFileTable[index]->blockBuffer);
+        if(openFileTable[index]->dirStruct != NULL) free(openFileTable[index]->dirStruct);
+        free(openFileTable[index]);  // Free the memory allocated for this entry
+    }
+    fileTableCapacity = 0;
+    fileTableSize = 0;
+    free(openFileTable);
+    openFileTable = NULL;
+}
 
+// Refreshes the fileSystem's block0
+// Based on the contents in the disk[][] is diskSimulator.c
+int refreshGlobalBlock0() {
     if (blockRead(block0, 0) != 0) {
         free(block0);
         return -4; // Error reading disk block
@@ -54,11 +74,42 @@ int fetchGlobalBlock0() {
     return 0;
 }
 
+// Updates the disk[][] with contents of global buffer block0 
 int updateGlobalBlock0() {
    if(block0 == NULL) return -1;
    return blockWrite(block0, 0);
 }
 
+// Frees the global buffer variable
+void cleanUpBlock0() {
+    if(!block0) return;
+
+    free(block0);
+}
+
+// Initialises the openFileTable and global block0
+// Refreshes the GlobalBlock0 based on contents in disk[0] in diskSimulator.c
+int refreshFileSystem() {
+    if(openFileTable == NULL) initOpenFileTable();
+    if(block0 == NULL) block0 = calloc(1, BLOCK_SIZE);
+
+    return refreshGlobalBlock0();
+}
+
+// Can save the contents of the global buffer block0 
+// to a given image file name
+// Either way, cleans up the block0 buffer and openFileTable
+void cleanUpFileSystem(bool saveState) {
+    if(saveState) {
+        blockWrite(block0, 0);
+        writeImage("newImage1.img");
+    }
+
+    cleanUpBlock0();
+    cleanUpFileTable();
+}
+
+// Adds an given entry (FileControlBlock struct) to the openFileEntry
 void addFileTableEntry(FileControlBlock *newEntry) {
     if (!openFileTable) initOpenFileTable();
 
@@ -67,6 +118,7 @@ void addFileTableEntry(FileControlBlock *newEntry) {
     openFileTable[fileTableSize++] = newEntry;
 }
 
+// Retrieves an entry (FileControlBlock struct) based on given index
 FileControlBlock* getFileEntry(size_t index) {
     if (index < fileTableSize) {
         return openFileTable[index];
@@ -74,6 +126,7 @@ FileControlBlock* getFileEntry(size_t index) {
     return NULL;  // Invalid index
 }
 
+// Updates an entry (FileControlBlock struct) based on given index
 void updateFileEntry(size_t index, FileControlBlock* updatedEntry) {
     if (index > fileTableSize) return;
     free(openFileTable[index]->blockBuffer);
@@ -82,18 +135,22 @@ void updateFileEntry(size_t index, FileControlBlock* updatedEntry) {
     openFileTable[index] = updatedEntry;
 }
 
+// Removes an entry, loops through the next entries and brings them
+// one step back
 void removeFileEntry(size_t index) {
     if (index > fileTableSize) return;
     free(openFileTable[index]->blockBuffer);
+    free(openFileTable[index]->dirStruct);
     free(openFileTable[index]);  // Free the memory allocated for this entry
-    memmove(
-        &openFileTable[index], 
-        &openFileTable[index + 1],          // Move from i + 1, to i
-        (fileTableSize - index - 1) * sizeof(FileControlBlock*)
-    );                                      // TODO this still leaves a gap
+    for (int i = index; i < fileTableSize - 1; i++) {
+        openFileTable[i] = openFileTable[i + 1];
+    }
+    openFileTable[fileTableSize - 1] = NULL; // Clear the last entry
     fileTableSize--;
 }
 
+// Retrieves the number of empty file blocks
+// based on the boolean values in the freeList
 int numFreeFileBlocks() {
     int numFreeFileBlocks = 0;
     for (int i = 0; i < sizeof(freeList); i++) {
@@ -102,34 +159,33 @@ int numFreeFileBlocks() {
     return numFreeFileBlocks;    
 }
 
+// Updates the status of a fileblock by updating it's boolean
+// value in the freeList
 void updateFileBlockStatus(int index, bool value) {
     if(index < 0 && index > fileTableSize) return;
 
     freeList[index] = value;
 }
 
-void cleanupOpenFileTable() {
-    for (size_t i = 0; i < fileTableSize; i++) {
-        free(openFileTable[i]);  // Free memory for each FileControlBlock
-    }
-    free(openFileTable);  // Free the array itself
-    openFileTable = NULL;
-    fileTableSize = 0;
-    fileTableCapacity = 0;
-}
-
+// Gets the first non-zero file block
+// By looping through the extent[16:32], aka the blocks
 int firstNonZeroFileBlock(int extent) {
-    fetchGlobalBlock0();
+    refreshFileSystem();
     
-    int startIndex = extent * EXTENT_SIZE;
-    for (int i = (startIndex + BLOCKS_PER_EXTENT); i < (startIndex + EXTENT_SIZE); i++) {
+    int extentStart = extent * EXTENT_SIZE;
+    int startIndex = extentStart + (int) (EXTENT_SIZE / 2);
+    int endIndex = startIndex + EXTENT_SIZE;
+    for (int i = startIndex; i < endIndex && i < BLOCK_SIZE; i++) {
         if(block0[i] != 0) return block0[i];
     }
     return -1;
 }
 
+// Gets the first free extent in the block0
+// aka block0[i * extentIndex] == 0xe5
+// returns i
 int firstFreeExtent() {
-    fetchGlobalBlock0();
+    refreshFileSystem();
     for(int extentIndex=0; extentIndex < (int) (BLOCK_SIZE / EXTENT_SIZE); extentIndex++)
 	{
 		if(block0[extentIndex*EXTENT_SIZE] == 0xe5) {
@@ -139,6 +195,8 @@ int firstFreeExtent() {
 	return -1;
 }
 
+// Gets the first free N fileblocks in the whole disk
+// by checking against the boolean values in the freeList
 int* firstNFreeFileBlocks(int n) {
     int *arr = malloc(sizeof(int) * n);
     for (int i = 1, j = 0; i < NUM_BLOCKS; i++) {
@@ -151,6 +209,8 @@ int* firstNFreeFileBlocks(int n) {
     return arr;
 }
 
+// Gets the arr of non-empty files blocks allocated to a file
+// based on fileDirStruct->blocks
 int* extractNonZeroBlocksD(DirStructType *d, int count) {
     int *nonZeroBlocksArr = malloc(sizeof(int) * count);
 
@@ -163,6 +223,8 @@ int* extractNonZeroBlocksD(DirStructType *d, int count) {
     return nonZeroBlocksArr;
 }
 
+// Gets the arr of non-empty files blocks allocated to a file
+// based on fileExtent[16:32]
 int* extractNonZeroBlocksE(uint8_t *e, int count) {
     int *nonZeroBlocksArr = malloc(sizeof(int) * count);
 
@@ -175,8 +237,10 @@ int* extractNonZeroBlocksE(uint8_t *e, int count) {
     return nonZeroBlocksArr;
 }
 
+// Gets the next empty file block after the fileBlockIndex
+// given. Usually from a dirStruct or fileExtent
 int closestNextFreeFileBlock(int index) {
-    for(int i=0; i < NUM_BLOCKS; i++) {
+    for(int i=index; i < NUM_BLOCKS; i++) {
 		if(freeList[i])	{
 			updateFileBlockStatus(i, false);
 			return i;
@@ -185,6 +249,7 @@ int closestNextFreeFileBlock(int index) {
     return -1;
 }
 
+// Find the index of a character in a string
 int findCharIndex(char* s, char what, int maxLen) {
     for (int i = 0; i < maxLen; i++) {
         if (s[i] == what) {
@@ -194,18 +259,25 @@ int findCharIndex(char* s, char what, int maxLen) {
     return -1;  // Return -1 if the character was not found
 }
 
+// Replaces a character in a string at an index
+// Depends on findCharIndex internally
 int replaceChar(char* s, char what, char with, int maxLen) {
     int index = findCharIndex(s, what, maxLen);
     if (index > -1) s[index] = with;
     return index;
 }
 
+// Replaces a character in a string with NULL
+// Effectively cutting the string at that point
+// NOTE: The space allocated remains the SAME
 int cutOnChar(char* s, char c, int maxLen) {
     int index = replaceChar(s, c, '\0', maxLen);  // Use replaceChar to replace the character with '\0'
     return (index != -1 && index < maxLen) ? index : maxLen - 1;        // If the char was found and it was cut, return newLen, else orignalLen
 }
 
-int numBlocksUsedInExtent(Extent extent) {
+// Returns how many file blocks a file is using
+// based on it's fileExtent
+int numFileBlocksUsedInExtent(Extent extent) {
     int numBlocks = 0;
     for (int i = (EXTENT_SIZE / 2); i < EXTENT_SIZE; i++) {
         if (extent[i] != 0 && extent[i] > 0 && extent[i] < NUM_BLOCKS) numBlocks++;
@@ -213,7 +285,9 @@ int numBlocksUsedInExtent(Extent extent) {
     return numBlocks;
 }
 
-int numBlocksUsedInDir(DirStructType* d) {
+// Returns how many file blocks a file is using
+// based on it's DirStructType->blocks
+int numFileBlocksUsedInDir(DirStructType* d) {
     int numBlocks = 0;
     for (int i = 0; i < (EXTENT_SIZE / 2); i++) {
         if (d->blocks[i] != 0 && d->blocks[i] > 0 && d->blocks[i] < NUM_BLOCKS) numBlocks++;
@@ -221,18 +295,23 @@ int numBlocksUsedInDir(DirStructType* d) {
     return numBlocks;
 }
 
+// Returns how many file blocks a file is using
+// based on it's extent's index in block0
 int numFileBlocksUsed(int extentIndex) {
-    fetchGlobalBlock0();
+    refreshFileSystem();
     int numBlocks = 0;
     
+    int extentStart = extentIndex * EXTENT_SIZE;
     for (int i = (EXTENT_SIZE / 2); i < EXTENT_SIZE; i++) {
-        if (block0[(extentIndex * EXTENT_SIZE) + i] != 0 
-        && block0[(extentIndex * EXTENT_SIZE) + i] > 0 
-        && block0[(extentIndex * EXTENT_SIZE) + i] < NUM_BLOCKS) numBlocks++;
+        if (block0[extentStart + i] != 0 
+        && block0[extentStart + i] > 0 
+        && block0[extentStart + i] < NUM_BLOCKS) numBlocks++;
     }
     return numBlocks;
 }
 
+// Fills up a DirStructType based on the contents of the extent block
+// in block0, as searched up by index
 void populateDirStruct(DirStructType *d, uint8_t index, uint8_t* e) {
     if (index < 0 || index >= (BLOCK_SIZE/EXTENT_SIZE) || !e || !d) return;
 
@@ -261,12 +340,14 @@ void populateDirStruct(DirStructType *d, uint8_t index, uint8_t* e) {
 
 }
 
+// Creates a new DirStructType struct with default values
+// based on the extentIndex passed to it
 DirStructType* initDirStruct(char* fileName, uint8_t index, uint8_t *e) {
     if (index < 0 || index >= (BLOCK_SIZE/EXTENT_SIZE) || !e) return NULL;
 
     if (e[EXTENT_SIZE * index] != 0xe5) return NULL;
     
-    DirStructType* d = malloc(sizeof(DirStructType));
+    DirStructType *d = calloc(1, sizeof(DirStructType));
     
     char *dotPointer = strchr(fileName, '.');
     int dotIndex = (int) (dotPointer - fileName);
@@ -277,9 +358,8 @@ DirStructType* initDirStruct(char* fileName, uint8_t index, uint8_t *e) {
     d->XL = index & 0x1F;
     d->status = 0x01;
 
-    for (int i = EXTENT_SIZE * index, j = 0; i < EXTENT_SIZE; i++) {
+    for (int i = EXTENT_SIZE * index; i < EXTENT_SIZE; i++) {
         e[i] = 0;
-        d->blocks[j++] = 0;
     }
     
     if (dotPointer) {
@@ -296,6 +376,9 @@ DirStructType* initDirStruct(char* fileName, uint8_t index, uint8_t *e) {
     return d;
 }
 
+// Creates a DirStructType struct based on the contents of the extent block
+// in block0, as searched up by index
+// Uses populateDirStruct internally
 DirStructType* mkDirStruct(int index, uint8_t* e) {
     if (index < 0 || index >= (BLOCK_SIZE/EXTENT_SIZE) || !e) return NULL;
     
@@ -307,6 +390,8 @@ DirStructType* mkDirStruct(int index, uint8_t* e) {
     return fileInfoPtr;
 } 
 
+// Writes the contents of a DirStructType struct to the buffer e
+// at index, ie index * EXTENT_SIZE
 void writeDirStruct(DirStructType* d, uint8_t index, uint8_t* e) {
     if (index < 0 || index >= (BLOCK_SIZE/EXTENT_SIZE) || !e || !d) return;
     int startingIndex = index * EXTENT_SIZE;
@@ -317,10 +402,12 @@ void writeDirStruct(DirStructType* d, uint8_t index, uint8_t* e) {
     *ptr++ = d->status;                                         // dirStructPtr = 0 + 1 = 1
 
     memset(ptr, ' ', NAME_SIZE - 1);                            // Fill with blanks first
+    d->name[NAME_SIZE - 1] = '\0';
     strncpy(ptr, d->name, strlen(d->name));
     ptr += NAME_SIZE - 1;                                       // dirStructPtr = 8 + 1 = 9
     
     memset(ptr, ' ', EXT_SIZE - 1);                             // Fill with blanks first
+    d->extension[EXT_SIZE - 1] = '\0';
     strncpy(ptr, d->extension, strlen(d->extension));
     ptr += EXT_SIZE - 1;                                        // dirStructPtr = 9 + 3 = 12
 
@@ -334,17 +421,19 @@ void writeDirStruct(DirStructType* d, uint8_t index, uint8_t* e) {
     memcpy(ptr, d->blocks, BLOCKS_PER_EXTENT);
 }
 
+// Initializes a freeFileBlocks list as freeList
 void makeFreeList() {
-    fetchGlobalBlock0();
-    DirStructType* d;
+    refreshFileSystem();
+    int extentStart, extentEnd;
     for (int i = 0; i < NUM_BLOCKS; i++) {
         freeList[i] = true;
     }
     for(int i = 0; i < (BLOCK_SIZE / EXTENT_SIZE); i++) {
-        d = mkDirStruct(i, block0);
-        if(d->status != 0xe5) {
-            for(int j = 0; j < 16; j++) {
-                freeList[(int) d->blocks[j]] = false;
+        extentStart = i * EXTENT_SIZE;
+        extentEnd = extentStart + EXTENT_SIZE;
+        if(block0[extentStart] != 0xe5) {
+            for(int j = extentStart + (int) (EXTENT_SIZE / 2); j < extentEnd; j++) {
+                freeList[block0[j]] = false;
             }
         }
     }
@@ -352,6 +441,7 @@ void makeFreeList() {
     freeList[0] = false;
 }
 
+// Prints the freeFileBlocks list
 void printFreeList() {
     printf("FREE BLOCK LIST: (* means in-use) \n");
     int rowSize = EXTENT_SIZE / 2;
@@ -362,6 +452,8 @@ void printFreeList() {
     }
 }
 
+// Loops through the extents in the buffer (usually block0)
+// To search for an extent which has the filename (name + extension) name
 int findExtentWithName(char* name, uint8_t* block0) {
     if (!checkLegalName(name)) return -1;
 
@@ -401,6 +493,7 @@ int findExtentWithName(char* name, uint8_t* block0) {
     return -1;
 }
 
+// Checks if the name (name + extension) given is as per 8.3 fileformat
 bool checkLegalName(char* name) { 
     // Validate input
     if (!name || strlen(name) == 0) return false;
@@ -452,6 +545,8 @@ bool checkLegalName(char* name) {
     return true; // All checks passed
 }
 
+// Debugging function
+// Colors the file block contents if cpmDir is run with raw contents of block0
 void printColorized(uint8_t *extent, int index) {
     #define COLOR_RED     "\033[31m"
     #define COLOR_BLUE    "\033[34m"
@@ -491,7 +586,7 @@ void printColorized(uint8_t *extent, int index) {
 }
 
 void cpmDir() {
-    fetchGlobalBlock0();
+    refreshFileSystem();
     const int raw = 1;
     const int rowSize = EXTENT_SIZE / 2;
     
@@ -518,9 +613,11 @@ void cpmDir() {
     } else {
         int filesRead = 0;
         int numBlocks, fileSize;
+        DirStructType* fileInfoPtr;
         printf("DIRECTORY LISTING\n");
         for (int i = 0; i < BLOCK_SIZE; i+=EXTENT_SIZE) {
-            DirStructType* fileInfoPtr = mkDirStruct(filesRead, block0);
+            fileInfoPtr = mkDirStruct(filesRead, block0);
+            if(!fileInfoPtr) continue;
             if(fileInfoPtr->status != 0xe5) {
                 numBlocks = 0;
                 for (int i = 0; i < BLOCKS_PER_EXTENT; i++ ) if(fileInfoPtr->blocks[i] != 0) numBlocks++;
@@ -531,6 +628,7 @@ void cpmDir() {
                 printf("%s.%s %d\n", fileInfoPtr->name, fileInfoPtr->extension, fileSize);
             }
             filesRead++;
+            free(fileInfoPtr);
         }
     }
 }
@@ -541,7 +639,7 @@ int cpmRename(char* oldName, char* newName) {
         return -2;
 
     // Read directory block
-    if (fetchGlobalBlock0() != 0) return -4; // Error reading disk block
+    if (refreshFileSystem() != 0) return -4; // Error reading disk block
 
     // Check if newName already exists
     if (findExtentWithName(newName, block0) != -1) return -3; // Destination filename exists
@@ -618,7 +716,7 @@ int cpmDelete(char* name) {
 int cpmCopy(char* oldName, char* newName) { 
     if(!checkLegalName(oldName) || !checkLegalName(newName)) return -1;
 
-    fetchGlobalBlock0();
+    refreshFileSystem();
 
     int oldFileExtentNum = findExtentWithName(oldName, block0);
     if (oldFileExtentNum == -1) return -1;
@@ -670,6 +768,7 @@ int cpmCopy(char* oldName, char* newName) {
     // Write updated block back to disk
     if (updateGlobalBlock0() != 0) return -4;
     free(newDirStruct);
+    free(newFreeBlocks);
     free(tempTransferBlock);
     return 0;
 }
@@ -679,10 +778,11 @@ int cpmOpen(char* fileName, char mode) {
 
     if(mode != 'r' && mode != 'w') return -6;
 
-    fetchGlobalBlock0();
+    refreshFileSystem();
 
     int fileExtentIndex = findExtentWithName(fileName, block0);
 
+    // If reading, but file's extent doesn't exist, fail
     if((mode == 'r') && (fileExtentIndex == -1)) return -1;
 
     FileControlBlock *entry;
@@ -691,45 +791,63 @@ int cpmOpen(char* fileName, char mode) {
         if(entry != NULL && entry->dirExtentIndex == fileExtentIndex) return -7;    // It's already open!
     }
     
-    if (mode == 'w' && numFreeFileBlocks() == 0) return -5;                             // No free blocks
+    // No free blocks
+    if (mode == 'w' && numFreeFileBlocks() == 0) return -5;                             
 
+    // Cycle through fileEntry in the openFileTable
     for (int i = 0; i < fileTableCapacity; i++) {
         entry = getFileEntry(i);
         if (entry != NULL) continue;
 
-        entry = malloc(sizeof(FileControlBlock));
+        // If entry is NULL, that is there's an open slot in the openFileTable --v
+        entry = calloc(1, sizeof(FileControlBlock));
         if(!entry) return -13;
-
-        int firstNonZeroBlock = firstNonZeroFileBlock(fileExtentIndex);
-        entry->blockBuffer = malloc(BLOCK_SIZE);
-
-        if(mode == 'r' && blockRead(entry->blockBuffer, firstNonZeroBlock) != 0) 
-            return -6;
-        else {
-            if(blockWrite(entry->blockBuffer, firstNonZeroBlock) != 0) 
+        
+        if (fileExtentIndex != -1) {                                            // File exists but not open
+            int firstNonZeroBlock = firstNonZeroFileBlock(fileExtentIndex);
+            entry->blockBuffer = calloc(1, BLOCK_SIZE);
+    
+            if(mode == 'r' && blockRead(entry->blockBuffer, firstNonZeroBlock) != 0) 
                 return -6;
-        }
-
-        if (fileExtentIndex != -1) {
+            else {
+                if(blockWrite(entry->blockBuffer, firstNonZeroBlock) != 0) 
+                    return -6;
+            }
             entry->currBlockIndex = firstNonZeroBlock;
             entry->dirExtentIndex = fileExtentIndex;
             entry->mode = mode;
             entry->dirStruct = mkDirStruct(fileExtentIndex, block0);
-            if(!entry->dirStruct) return -6;
+            if(!entry->dirStruct) {
+                if(!entry->blockBuffer) free(entry->blockBuffer);
+                if(!entry->dirStruct) free(entry->dirStruct);
+                free(entry);
+                return -6;
+            }
             entry->readWriteIndex = 0;
             addFileTableEntry(entry);
             return i;
 
-        } else if(fileExtentIndex == -1) {
+        } else if(fileExtentIndex == -1) {                                      // File doesn't exist at all
 
             int toAssignExtent = firstFreeExtent();
 
-            if (toAssignExtent == -1) return -8;
+            // No new extent available to allocate
+            if (toAssignExtent == -1) {
+                if(!entry->blockBuffer) free(entry->blockBuffer);
+                if(!entry->dirStruct) free(entry->dirStruct);
+                free(entry);
+                return -8;
+            }
 
-            fetchGlobalBlock0();
+            refreshFileSystem();
 
             DirStructType *newDirStruct = initDirStruct(fileName, toAssignExtent, block0);
-            if (!newDirStruct) return -6;
+            if (!newDirStruct) {
+                if(!entry->blockBuffer) free(entry->blockBuffer);
+                if(!entry->dirStruct) free(entry->dirStruct);
+                free(entry);
+                return -6;
+            }
             block0[toAssignExtent * EXTENT_SIZE] = 0x01;
 
             entry->dirExtentIndex = toAssignExtent;
@@ -827,6 +945,7 @@ int cpmWrite(int pointer, uint8_t* buffer, int size) {
         freeBlocksArr = firstNFreeFileBlocks(1);
         if(!freeBlocksArr) return -1;
         currFileBlockNum = freeBlocksArr[0];
+        free(freeBlocksArr);
         fcb->dirStruct->blocks[0] = currFileBlockNum;
         if(blockWrite(tempWriteBuffer, currFileBlockNum) != 0) return -1;
     } else {
@@ -867,7 +986,7 @@ int cpmWrite(int pointer, uint8_t* buffer, int size) {
     if(blockRead(tempWriteBuffer, currFileBlockNum) != 0) return -1;
 
     // Update the Global Block 0
-    fetchGlobalBlock0();
+    refreshFileSystem();
     writeDirStruct(fcb->dirStruct, fcb->dirExtentIndex, block0);
     // Write updated block back to disk
     if (updateGlobalBlock0() != 0) return -4;
