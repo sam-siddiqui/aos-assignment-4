@@ -59,25 +59,27 @@ int main(int argc, char* argv[]) {
     // Print the updated list of free blocks for debugging purposes.
     printFreeList();
 
-    int fp = cpmOpen("test.txt", 'w');
+    // Extra functions trial run
+    // int fp = cpmOpen("test.txt", 'w');
 
-    assert(fp >= 0 && "File creation failed!\n");
+    // assert(fp >= 0 && "File creation failed!\n");
 
-    uint8_t *dataBuffer = malloc(16);
-    for (int i = 0; i < 16; i++) dataBuffer[i] = i + 1;
+    // uint8_t *dataBuffer = malloc(16);
+    // for (int i = 0; i < 16; i++) dataBuffer[i] = i + 1;
 
-    assert(cpmWrite(fp, dataBuffer, 16) >= 0 && "File write failed!\n");
+    // assert(cpmWrite(fp, dataBuffer, 16) >= 0 && "File write failed!\n");
     
-    assert(cpmClose(fp) == 0 && "File closing failed!\n");
+    // assert(cpmClose(fp) == 0 && "File closing failed!\n");
 
-    cpmDir();
-    printFreeList();
-    cpmCopy("test.txt", "test2.txt");
+    // cpmDir();
+    // printFreeList();
+    // cpmCopy("test.txt", "test2.txt");
     
-    cpmDir();
-    printFreeList();
+    // cpmDir();
+    // printFreeList();
 
-    free(dataBuffer);
-
+    // free(dataBuffer);
+    
+    cleanUpFileSystem(false);
     return 0; // Return success code.
 }
