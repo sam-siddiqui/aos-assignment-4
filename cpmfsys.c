@@ -776,7 +776,7 @@ int cpmCopy(char* oldName, char* newName) {
 int cpmOpen(char* fileName, char mode) {
     if(!checkLegalName(fileName)) return -2;
 
-    if(mode != 'r' && mode != 'w') return -6;
+    if(mode != 'r' && mode != w) return -6;
 
     refreshFileSystem();
 
@@ -877,7 +877,7 @@ int cpmRead(int pointer, uint8_t* buffer, int size) {
     FileControlBlock *fcb = getFileEntry(pointer);
 
     if(fcb == NULL) return -8;
-    if(fcb != NULL && fcb->mode != 'r') return -6;                  // Wrong mode
+    if(fcb != NULL && fcb->mode != r) return -6;                  // Wrong mode
     if(size > BLOCK_SIZE) return -11;                                     // Buffer to big to read
 
     int nonZeroFileBlocksCount = numFileBlocksUsed(fcb->dirExtentIndex);
@@ -918,7 +918,7 @@ int cpmWrite(int pointer, uint8_t* buffer, int size) {
     FileControlBlock *fcb = getFileEntry(pointer);
 
     if(fcb == NULL) return -8;
-    if(fcb != NULL && fcb->mode != 'w') return -6;          // Wrong Mode
+    if(fcb != NULL && fcb->mode != w) return -6;          // Wrong Mode
 
     int nonZeroFileBlocksCount = numFileBlocksUsed(fcb->dirExtentIndex);
     int fileSize = (nonZeroFileBlocksCount - 1) * BLOCK_SIZE;
